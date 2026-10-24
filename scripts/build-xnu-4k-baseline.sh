@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -x
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 # Source versions come from feeds.toml through the unixnu driver; the defaults are the qualified ones.
