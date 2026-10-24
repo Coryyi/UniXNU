@@ -279,10 +279,10 @@ jobs:
         if: always() && steps.kernel.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: unixnu-${{ env.BOARD }}-kernel
+          name: unixnu-${{ steps.check.outputs.board }}-kernel
           path: |
-            out/${{ env.BOARD }}/kernel/
-            out/${{ env.BOARD }}/tree/build-report.json
+            out/${{ steps.check.outputs.board }}/kernel/
+            out/${{ steps.check.outputs.board }}/tree/build-report.json
           retention-days: 7
           if-no-files-found: warn
 
