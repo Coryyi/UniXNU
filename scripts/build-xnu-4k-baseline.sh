@@ -535,6 +535,7 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ]; then
   CRYPTO_ARCHIVE=$ROOT/build/corecrypto-2023/libcorecrypto_kernel_noasm-namespaced.a
   if [ ! -f "$CRYPTO_ARCHIVE" ]; then
     ensure_refer corecrypto-2023 https://github.com/ONLYA/corecrypto-2023.git 11fba65b12d8830630e248dfa8344caf8b065f26
+    python3 scripts/build-corecrypto-14.py
     python3 scripts/build-corecrypto-14.py --namespace
     test -f "$CRYPTO_ARCHIVE"
   fi
