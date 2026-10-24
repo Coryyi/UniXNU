@@ -3,6 +3,15 @@ set -euo pipefail
 set -x
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
+ensure_refer() { # name url commit
+  local d="refer/$1"
+  if [ ! -d "$d/.git" ]; then
+    git init -q "$d"
+    git -C "$d" remote add origin "$2"
+    git -C "$d" fetch -q --depth 1 origin "$3"
+    git -C "$d" checkout -q FETCH_HEAD
+  fi
+}
 # Source versions come from feeds.toml through the unixnu driver; the defaults are the qualified ones.
 XNU_TAG=${UNIXNU_XNU_TAG:-xnu-10063.141.1}
 XNU_COMMIT=${UNIXNU_XNU_COMMIT:-d8b80295118ef25ac3a784134bcf95cd8e88109f}
@@ -524,7 +533,11 @@ else
 fi
 if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ]; then
   CRYPTO_ARCHIVE=$ROOT/build/corecrypto-2023/libcorecrypto_kernel_noasm-namespaced.a
-  test -f "$CRYPTO_ARCHIVE"
+  if [ ! -f "$CRYPTO_ARCHIVE" ]; then
+    ensure_refer corecrypto-2023 https://github.com/ONLYA/corecrypto-2023.git 11fba65b12d8830630e248dfa8344caf8b065f26
+    python3 scripts/build-corecrypto-14.py --namespace
+    test -f "$CRYPTO_ARCHIVE"
+  fi
   EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_SOURCE_CORECRYPTO14=1"
   KERNEL_EXTRA_ARCHIVES="-L$KERNEL_SDKROOT/usr/local/lib/kernel -lfirehose_kernel $CRYPTO_ARCHIVE"
   KERNEL_ARCHIVE_DEPENDENCIES=$CRYPTO_ARCHIVE
@@ -682,7 +695,12 @@ PY_BINDINGS
   if [ "${XNU_SOURCE_PTHREAD:-0}" = 1 ]; then
     PTHREAD_ARCHIVE=$ROOT/build/libpthread-kernel/libpthread_kernel.a
     PTHREAD_BOOTSTRAP=$ROOT/build/libpthread-kernel/source_pthread_bootstrap.o
-    test -f "$PTHREAD_ARCHIVE"
+    if [ ! -f "$PTHREAD_ARCHIVE" ]; then
+      ensure_refer libpthread https://github.com/apple-oss-distributions/libpthread.git c0e60fb5ecfc54cf379c261d3f9572cc22ded891
+      python3 scripts/build-libpthread-kernel.py
+      test -f "$PTHREAD_ARCHIVE"
+      test -f "$PTHREAD_BOOTSTRAP"
+    fi
     test -f "$PTHREAD_BOOTSTRAP"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$PTHREAD_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $PTHREAD_ARCHIVE"
