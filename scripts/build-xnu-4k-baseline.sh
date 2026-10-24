@@ -584,7 +584,9 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ]; then
   if [ "${XNU_ARMCPU:-0}" = 1 ]; then
     ARMCPU_ARCHIVE=$ROOT/build/armcpu/libArmCpu.a
     if [ ! -f "$ARMCPU_ARCHIVE" ]; then
-      python3 scripts/build-umi-arm-driver.py ArmCpu --gic-diagnostics phone
+      # No gic-diagnostics here: the bootstrap kernel does not carry the
+      # UMI early-trace symbols the observer overlay references.
+      python3 scripts/build-umi-arm-driver.py ArmCpu
       test -f "$ARMCPU_ARCHIVE"
     fi
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARMCPU_ARCHIVE"
