@@ -574,13 +574,19 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ]; then
   fi
   if [ "$ARM_DT_PLATFORM" = 1 ]; then
     ARM_DT_ARCHIVE=$ROOT/build/armdt-platform/libArmDTPlatform.a
-    test -f "$ARM_DT_ARCHIVE"
+    if [ ! -f "$ARM_DT_ARCHIVE" ]; then
+      python3 scripts/build-umi-arm-driver.py ArmDTPlatform
+      test -f "$ARM_DT_ARCHIVE"
+    fi
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARM_DT_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARM_DT_ARCHIVE"
   fi
   if [ "${XNU_ARMCPU:-0}" = 1 ]; then
     ARMCPU_ARCHIVE=$ROOT/build/armcpu/libArmCpu.a
-    test -f "$ARMCPU_ARCHIVE"
+    if [ ! -f "$ARMCPU_ARCHIVE" ]; then
+      python3 scripts/build-umi-arm-driver.py ArmCpu --gic-diagnostics phone
+      test -f "$ARMCPU_ARCHIVE"
+    fi
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARMCPU_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARMCPU_ARCHIVE"
   fi
