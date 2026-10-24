@@ -275,6 +275,17 @@ jobs:
           print(f'{count} text logs staged')
           PY
 
+      - name: Upload the kernel artifacts
+        if: always() && steps.kernel.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-${{ env.BOARD }}-kernel
+          path: |
+            out/${{ env.BOARD }}/kernel/
+            out/${{ env.BOARD }}/tree/build-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Upload the build logs
         if: always() && steps.logs.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
