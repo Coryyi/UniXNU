@@ -211,6 +211,7 @@ jobs:
           # prepare-xnu-source.py lists Apple sources through the GitHub API; anonymous calls from hosted runners hit
           # the shared rate limit (HTTP 403).
           GITHUB_TOKEN: ${{ github.token }}
+          UMI_EARLY_TRACE: '1'
         run: |
           # Bootstrap pass: plain kernel so the archive builders have their
           # compile records and symbol inputs, then the real defconfig pass.
