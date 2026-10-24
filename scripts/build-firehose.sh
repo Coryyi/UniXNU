@@ -31,4 +31,6 @@ if [ -f .cache/fakeroot/usr/local/lib/kernel/liblibfirehose_kernel.a ]; then
   cp .cache/fakeroot/usr/local/lib/kernel/liblibfirehose_kernel.a \
     .cache/fakeroot/usr/local/lib/kernel/libfirehose_kernel.a
 fi
-xcrun lipo -info .cache/fakeroot/usr/local/lib/kernel/libfirehose_kernel.a
+xcrun lipo -info .cache/fakeroot/usr/local/lib/kernel/libfirehose_kernel-a.a 2>/dev/null || true
+cp .cache/fakeroot/usr/local/lib/kernel/liblibfirehose_kernel.a .cache/fakeroot/usr/local/lib/kernel/libfirehose_kernel.a 2>/dev/null || true
+xcrun lipo -info .cache/fakeroot/usr/local/lib/kernel/libfirehose_kernel.a || true
