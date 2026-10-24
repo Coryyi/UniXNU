@@ -218,7 +218,7 @@ jobs:
           ./unixnu build kernel
           # Second pass must start from pristine XNU sources: the patch
           # state machine in build-xnu-4k-baseline.sh assumes one pass.
-          rm -rf out/thyme/tree/.cache/xnu-work out/thyme/tree/build/xnu
+          rm -rf out/thyme/tree/.cache/xnu-work
           ./unixnu defconfig "$DEFCONFIG"
           ./unixnu build kernel
 
