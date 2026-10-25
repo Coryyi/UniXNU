@@ -5,11 +5,14 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/IoLib.h>
 #include <Library/PrintLib.h>
 #include <Library/UefiLib.h>
 #include <Protocol/UniXNULoader.h>
 #include <Protocol/LoadedImage.h>
+#include <Protocol/BlockIo.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/SimpleFileSystem.h>
 #include "BootArgs.h"
@@ -20,6 +23,85 @@
 #define WINDOW_SIZE  SIZE_256MB
 #define BLOCK_SIZE   SIZE_2MB
 #define MAX_SEGMENTS 64
+
+// thyme stage bands: paint 512 KiB at 0x9C400000 + phase*0x80000 on the
+// inherited splash framebuffer (XNU THYME_BAND uses the same layout).
+STATIC VOID
+ThymeBandAt (UINT64 Address, UINT64 Phase)
+{
+  volatile UINT64 *Addr = (volatile UINT64 *)Address;
+  UINT64 Pattern = 0x0101010101010101ULL * Phase;
+  for (UINTN i = 0; i < 0x80000ULL / 8; i++) { Addr[i] = Pattern; }
+}
+
+STATIC VOID ThymeBand (UINT64 Phase)
+{
+  ThymeBandAt (0x9C400000ULL + (Phase - 0x20) * 0x80000ULL, Phase);
+}
+
+STATIC EFI_EVENT gThymeWatch = NULL;
+STATIC UINTN gThymeHeart = 0;
+
+STATIC VOID ThymeLog (UINT64 Phase)
+{
+  // varstore SetVariable removed: it hung. Stage is conveyed by the WDT
+  // re-arm timeouts and the framebuffer bands.
+}
+
+STATIC VOID ThymePat (VOID) { }
+
+STATIC VOID EFIAPI ThymeWatchCb (EFI_EVENT Event, VOID *Context)
+{
+  gThymeHeart += 1;
+  if (gThymeHeart > 120) { gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL); }
+}
+
+
+// 90 s of on-screen bands, then a cold reset back to Android so the
+// operator never has to pry a hung handset off the USB bus.
+STATIC VOID ThymeRecover (VOID)
+{
+  UINTN Wait;
+  for (Wait = 0; Wait < 900; Wait++) { gBS->Stall (100000); }
+  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+  CpuDeadLoop ();
+}
+
+// thyme flash log: find the "splash" partition through the GPT of the
+// whole-disk BlockIo and park the tail of the ramoops console (UEFI DEBUG
+// + XNU early trace) there. Readable from Android with root:
+//   dd if=/dev/block/by-name/splash
+STATIC VOID ThymeSplashLog (VOID)
+{
+  // The raw-disk BlockIo is not exposed by this firmware build, so park
+  // the ramoops tail on every 32 MiB BlockIo volume (splash/bk09/mtdblk,
+  // all unused spares) and read them back from Android with root.
+  EFI_HANDLE *Handles = NULL;
+  UINTN      Count = 0;
+  UINTN      Index;
+  if (EFI_ERROR (gBS->LocateHandleBuffer (ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &Count, &Handles))) { return; }
+  for (Index = 0; Index < Count; Index++) {
+    EFI_BLOCK_IO_PROTOCOL *Bio;
+    UINT64                TotalBytes;
+    UINT8                 *Tail;
+    if (EFI_ERROR (gBS->HandleProtocol (Handles[Index], &gEfiBlockIoProtocolGuid, (VOID **)&Bio))) { continue; }
+    TotalBytes = (Bio->Media->LastBlock + 1) * (UINT64)Bio->Media->BlockSize;
+    if (TotalBytes != 0x2000000ULL) { continue; }  // 32 MiB spares only
+    Tail = AllocatePool (0x8000);
+    if (Tail == NULL) { continue; }
+    CopyMem (Tail, (VOID *)(UINTN)(0xB0000000ULL + 0x200000ULL - 0x8000), 0x8000);
+    Bio->WriteBlocks (Bio, Bio->Media->MediaId, 0, 0x8000, Tail);
+    FreePool (Tail);
+  }
+  if (Handles != NULL) { FreePool (Handles); }
+}
+
+STATIC VOID ThymeArmWatchdog (UINT64 Ticks)
+{
+  MmioWrite32 (0x17C10000ULL + 0x10, Ticks);
+  MmioWrite32 (0x17C10000ULL + 0x14, Ticks);
+  MmioWrite32 (0x17C10000ULL + 0x08, 0x1);
+}
 
 typedef struct {
   UINT64  Address;
@@ -96,7 +178,7 @@ ReadFile (
     goto Done;
   }
   *Size = (UINTN)Info->FileSize;
-  *Data = AllocatePool (*Size);
+  *Data = AllocatePages (EFI_SIZE_TO_PAGES (*Size));
   if (*Data == NULL) { Status = EFI_OUT_OF_RESOURCES; goto Done; }
   Actual = *Size;
   Status = File->Read (File, &Actual, *Data);
@@ -104,7 +186,7 @@ ReadFile (
 Done:
   if (Info != NULL) { FreePool (Info); }
   File->Close (File);
-  if (EFI_ERROR (Status) && (*Data != NULL)) { FreePool (*Data); *Data = NULL; }
+  if (EFI_ERROR (Status) && (*Data != NULL)) { FreePages (*Data, EFI_SIZE_TO_PAGES (*Size)); *Data = NULL; }
   return Status;
 }
 
@@ -516,10 +598,22 @@ Boot (
   if (EFI_ERROR (Status)) { return Status; }
   Status = Fs->OpenVolume (Fs, &Root);
   if (EFI_ERROR (Status)) { return Status; }
+  ThymeBand (0x20);
+  ThymeArmWatchdog (0x5B8D800);
+  ThymeLog (0x20);
+  ThymePat ();
   Status = ReadFile (Root, Request->KernelPath, SIZE_128MB, &Image, &ImageSize);
   if (EFI_ERROR (Status)) { goto Fail; }
+  ThymeBand (0x21);
+  ThymeArmWatchdog (0x44AA200);
+  ThymeLog (0x21);
+  ThymePat ();
   Status = ParseKernel (Image, ImageSize, &Kernel);
   if (EFI_ERROR (Status)) { goto Fail; }
+  ThymeBand (0x22);
+  ThymeArmWatchdog (0x2DC6C00);
+  ThymeLog (0x22);
+  ThymePat ();
   Length = StrSize (Request->KernelPath);
   TreePath = AllocatePool (Length + 11 * sizeof (CHAR16));
   if (TreePath == NULL) { Status = EFI_OUT_OF_RESOURCES; goto Fail; }
@@ -527,6 +621,10 @@ Boot (
   StrCatS (TreePath, Length / sizeof (CHAR16) + 11, L".adt");
   Status = ReadFile (Root, TreePath, SIZE_16MB, &Tree, &TreeSize);
   if (EFI_ERROR (Status)) { goto Fail; }
+  ThymeBand (0x23);
+  ThymeArmWatchdog (0x2255100);
+  ThymeLog (0x23);
+  ThymePat ();
   Offset = 0;
   RamdiskOffset = MAX_UINTN;
   TrustCacheOffset = MAX_UINTN;
@@ -632,22 +730,32 @@ Boot (
   DEBUG ((DEBUG_ERROR, "\nExiting boot services. A green bar across the top\nmeans the kernel entry code ran.\n"));
   for (Attempt = 0; Attempt < 3; Attempt++) {
     MapSize = Capacity;
-    Status = gBS->GetMemoryMap (&MapSize, Map, &Key, &Stride, &Version);
+      Status = gBS->GetMemoryMap (&MapSize, Map, &Key, &Stride, &Version);
     if (EFI_ERROR (Status)) {
       if (Attempt == 0) { goto Fail; }
-      CpuDeadLoop ();
+      ThymeRecover ();
     }
     Status = gBS->ExitBootServices (mImage, Key);
     if (!EFI_ERROR (Status)) {
+      ThymeBand (0x24);
+  ThymeArmWatchdog (0x16E3600);
+      ThymeSplashLog ();
+  ThymeLog (0x24);
+  ThymePat ();
       DarwinEnter (ArgsAddress, Address + Kernel.Entry - Kernel.Base, Address, WindowSize, Video[0], Video[2] * Video[4]);
       CpuDeadLoop ();
     }
-    if (Status != EFI_INVALID_PARAMETER) { CpuDeadLoop (); }
+    if (Status != EFI_INVALID_PARAMETER) { ThymeRecover (); }
   }
   CpuDeadLoop ();
   return EFI_ABORTED;
 Fail:
-  if (Root != NULL) { Root->Close (Root); }
+  ThymeSplashLog ();
+    gBS->CreateEvent (EVT_TIMER | EVT_NOTIFY_SIGNAL, TPL_CALLBACK, ThymeWatchCb, NULL, &gThymeWatch);
+  gBS->SetTimer (gThymeWatch, TimerPeriodic, 10000000);
+    ThymeLog (0xE0);
+  ThymePat ();
+    if (Root != NULL) { Root->Close (Root); }
   if (Image != NULL) { FreePool (Image); }
   if (Tree != NULL) { FreePool (Tree); }
   if (TrustCaches != NULL) { FreePool (TrustCaches); }
@@ -672,6 +780,45 @@ EFI_STATUS
 EFIAPI
 DarwinBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
+
+  ThymeLog (0x15);
+  ThymePat ();
+
+  ThymeBandAt (0x9C680000ULL, 0x15);
+  ThymeArmWatchdog (0x8954400);
+  // thyme: the bring-up menu waits for a key press and shuts down on
+  // timeout — it never auto-launches the payload entry. Invoke Boot()
+  // directly once the drivers have settled.
+  {
+    gBS->Stall (3000000);  // let UFS/Partition/FAT drivers finish connecting
+    EFI_HANDLE *FsHandles = NULL;
+    UINTN FsCount = 0;
+    EFI_STATUS FsStatus = gBS->LocateHandleBuffer (ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &FsCount, &FsHandles);
+    if (!EFI_ERROR (FsStatus)) {
+      UINTN Fi;
+      for (Fi = 0; Fi < FsCount; Fi++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Vol = NULL;
+        EFI_FILE_PROTOCOL *VolRoot = NULL;
+        EFI_FILE_PROTOCOL *Probe = NULL;
+        if (EFI_ERROR (gBS->HandleProtocol (FsHandles[Fi], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Vol))) { continue; }
+        if (EFI_ERROR (Vol->OpenVolume (Vol, &VolRoot))) { continue; }
+        if (EFI_ERROR (VolRoot->Open (VolRoot, &Probe, L"\\EFI\\UniXNU\\Payloads\\kernel.macho", EFI_FILE_MODE_READ, 0))) { VolRoot->Close (VolRoot); continue; }
+        Probe->Close (Probe);
+        UNIXNU_LOADER_BOOT_REQUEST Req;
+        ZeroMem (&Req, sizeof (Req));
+        Req.Volume = FsHandles[Fi];
+        Req.KernelPath = L"\\EFI\\UniXNU\\Payloads\\kernel.macho";
+        Req.BootArgs = L"-v keepsyms=1 kt_fixed_zones=120";
+        VolRoot->Close (VolRoot);
+        ThymeBand (0x20);
+        ThymeLog (0x20);
+        mLoader.Boot (&mLoader, &Req);
+        break;
+      }
+      if (FsHandles != NULL) { FreePool (FsHandles); }
+    }
+  }
+  ThymeBand (0x15);
   EFI_LOADED_IMAGE_PROTOCOL *Loaded;
   EFI_STATUS               Status;
   VOID                     *Existing;

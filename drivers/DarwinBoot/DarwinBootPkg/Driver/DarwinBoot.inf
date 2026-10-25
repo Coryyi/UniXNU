@@ -25,11 +25,14 @@
   DebugLib
   MemoryAllocationLib
   PrintLib
+  UefiRuntimeServicesTableLib
   UefiBootServicesTableLib
   UefiDriverEntryPoint
+  IoLib
   UefiLib
 
 [Protocols]
+  gEfiBlockIoProtocolGuid
   gUniXNULoaderProtocolGuid ## PRODUCES
   gEfiSimpleFileSystemProtocolGuid ## CONSUMES
   gEfiLoadedImageProtocolGuid ## CONSUMES
