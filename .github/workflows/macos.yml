@@ -16,7 +16,7 @@ on:
         required: true
         default: sheng_defconfig
       steps:
-        description: Steps to build (nothing is uploaded except text logs; userdata needs about 16 GB of disk)
+        description: Steps to build (kernel artifacts and text logs are uploaded; userdata needs about 16 GB of disk)
         type: choice
         options:
           - kernel
@@ -208,6 +208,7 @@ jobs:
       - name: Build kernel
         id: kernel
         env:
+          BOARD: ${{ steps.check.outputs.board }}
           # prepare-xnu-source.py lists Apple sources through the GitHub API; anonymous calls from hosted runners hit
           # the shared rate limit (HTTP 403).
           GITHUB_TOKEN: ${{ github.token }}
@@ -215,12 +216,27 @@ jobs:
         run: |
           # Bootstrap pass: plain kernel so the archive builders have their
           # compile records and symbol inputs, then the real defconfig pass.
-          ./unixnu defconfig bootstrap_defconfig
-          ./unixnu build kernel
+          if [ -f device/configs/bootstrap_defconfig ]; then
+            ./unixnu defconfig bootstrap_defconfig
+            ./unixnu build kernel
           # Second pass must start from pristine XNU sources: the patch
           # state machine in build-xnu-4k-baseline.sh assumes one pass.
           # emit_prelink refuses to overwrite, so drop pass-one products too.
-          rm -rf out/thyme/tree/.cache/xnu-work out/thyme/kernel
+            python3 - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          root = Path('out').resolve()
+          board = (root / os.environ['BOARD']).resolve()
+          if board.parent != root:
+              raise SystemExit('board output must be directly under out/')
+          for relative in ('tree/.cache/xnu-work', 'kernel'):
+              target = board / relative
+              if not target.resolve().is_relative_to(board):
+                  raise SystemExit(f'refusing output outside board directory: {target}')
+              if target.exists():
+                  shutil.rmtree(target)
+          PY
+          fi
           ./unixnu defconfig "$DEFCONFIG"
           ./unixnu build kernel
 
@@ -323,7 +339,7 @@ jobs:
             echo "| userdata | ${USERDATA:-skipped} |"
             echo "| payload | ${PAYLOAD:-skipped} |"
             echo
-            echo "This workflow only checks that the build works. It publishes text logs (7 days) and no images."
+            echo "This workflow checks build completion, not hardware boot. It publishes kernel artifacts and text logs for 7 days; boot and userdata images are not uploaded."
             xcodebuild -version > /tmp/xcv 2>&1 || true; head -n 1 /tmp/xcv || true
           } >> "$GITHUB_STEP_SUMMARY"
 
