@@ -1,5 +1,8 @@
 """Command line of the UniXNU build driver."""
 import argparse
+import hashlib
+import json
+import os
 import platform
 import shutil
 import sys
@@ -49,6 +52,8 @@ def parser():
     sub.add_parser('tree', parents=[c], help='assemble the build tree')
     b = sub.add_parser('build', parents=[c], help='build kernel, package and firmware')
     b.add_argument('steps', nargs='*', choices=STEPS + OPTIONAL_STEPS + ('all', 'prelink'), default=['all'])
+    b.add_argument('--source-only', action='store_true',
+                   help='save the unstripped source XNU kernel without donor prelink (kernel step only)')
     i = sub.add_parser('bootimg', parents=[c], help='pack the boot image from the firmware volume and a device tree')
     i.add_argument('--fd', metavar='FILE', help='firmware volume (default: the build output under --uefi)')
     i.add_argument('--dtb', metavar='FILE', help='compiled device tree; or UNIXNU_DTB')
@@ -109,6 +114,8 @@ def cmd_fetch(ctx):
 def cmd_build(ctx):
     ctx.refuse_example()
     steps = ctx.args.steps
+    if ctx.args.source_only and steps != ['kernel']:
+        raise Error('--source-only applies only to "build kernel"')
     if 'all' in steps:
         steps = list(STEPS)
     if 'userdata' in steps:
@@ -123,7 +130,28 @@ def cmd_build(ctx):
     modules = prepare(ctx, steps + (['kernel'] if 'prelink' in steps else []))
     if 'kernel' in steps:
         kernel.build(ctx, modules)
-        kernel.prelink(ctx)
+        if ctx.args.source_only:
+            spec = ctx.board.get('kernel', {}).get('prelink', {})
+            source = ctx.tree / spec.get(
+                'kernel', 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf')
+            if not source.is_file():
+                raise Error(f'unstripped source kernel missing: {source}')
+            output = ctx.work / 'kernel/source-kernel.macho'
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, output)
+            digest = hashlib.sha256(output.read_bytes()).hexdigest()
+            report = {
+                'kernel_sha256': digest,
+                'kernel_bytes': output.stat().st_size,
+                'prelinked': False,
+                'hardware_tested': False,
+                'early_trace_environment': os.environ.get('UMI_EARLY_TRACE', 'unset'),
+                'defconfig_sha256': hashlib.sha256(ctx.config_path.read_bytes()).hexdigest(),
+            }
+            (output.parent / 'source-kernel.json').write_text(json.dumps(report, indent=2) + '\n')
+            log(f'kernel: source-only {output} sha256 {digest}')
+        else:
+            kernel.prelink(ctx)
     elif 'prelink' in steps:
         kernel.prelink(ctx)
     if 'package' in steps:

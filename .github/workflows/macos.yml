@@ -20,6 +20,7 @@ on:
         type: choice
         options:
           - kernel
+          - kernel source-only
           - kernel payload
           - kernel userdata
           - kernel userdata payload
@@ -209,6 +210,7 @@ jobs:
         id: kernel
         env:
           BOARD: ${{ steps.check.outputs.board }}
+          SOURCE_ONLY: ${{ inputs.steps == 'kernel source-only' }}
           # prepare-xnu-source.py lists Apple sources through the GitHub API; anonymous calls from hosted runners hit
           # the shared rate limit (HTTP 403).
           GITHUB_TOKEN: ${{ github.token }}
@@ -218,7 +220,11 @@ jobs:
           # compile records and symbol inputs, then the real defconfig pass.
           if [ -f device/configs/bootstrap_defconfig ]; then
             ./unixnu defconfig bootstrap_defconfig
-            ./unixnu build kernel
+            if [ "$SOURCE_ONLY" = true ]; then
+              UMI_EARLY_TRACE=0 ./unixnu build kernel
+            else
+              ./unixnu build kernel
+            fi
           # Second pass must start from pristine XNU sources: the patch
           # state machine in build-xnu-4k-baseline.sh assumes one pass.
           # emit_prelink refuses to overwrite, so drop pass-one products too.
@@ -238,7 +244,11 @@ jobs:
           PY
           fi
           ./unixnu defconfig "$DEFCONFIG"
-          ./unixnu build kernel
+          if [ "$SOURCE_ONLY" = true ]; then
+            UMI_EARLY_TRACE=0 ./unixnu build kernel --source-only
+          else
+            ./unixnu build kernel
+          fi
 
       - name: Build userdata
         id: userdata
