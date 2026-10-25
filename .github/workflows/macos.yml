@@ -21,6 +21,7 @@ on:
         options:
           - kernel
           - kernel source-only
+          - kernel thyme-ufs-probe
           - kernel payload
           - kernel userdata
           - kernel userdata payload
@@ -216,6 +217,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           UMI_EARLY_TRACE: '1'
         run: |
+          if [ "$STEPS" = 'kernel thyme-ufs-probe' ]; then
+            test "$BOARD" = thyme
+            test "$DEFCONFIG" = thyme_k0_defconfig
+            python3 device/bringup/build-thyme-ufs-probe.py \
+              --workspace "$RUNNER_TEMP/thyme-ufs-probe" --unixnu "$GITHUB_WORKSPACE" \
+              --source-commit "$GITHUB_SHA" -j 6
+            exit 0
+          fi
           # Bootstrap pass: plain kernel so the archive builders have their
           # compile records and symbol inputs, then the real defconfig pass.
           if [ -f device/configs/bootstrap_defconfig ]; then
@@ -320,6 +329,20 @@ jobs:
           path: |
             out/${{ steps.check.outputs.board }}/kernel/
             out/${{ steps.check.outputs.board }}/tree/build-report.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload source-only UFS probe receipts and logs
+        if: always() && inputs.steps == 'kernel thyme-ufs-probe'
+        uses: actions/upload-artifact@v4
+        with:
+          name: thyme-source-ufs-probe
+          path: |
+            ${{ runner.temp }}/thyme-ufs-probe/probe-inputs.json
+            ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/kernel/
+            ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/logs/
+            ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/*source-build-status.json
+            ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/tree/build/umi-ufs-probe/
           retention-days: 7
           if-no-files-found: warn
 
