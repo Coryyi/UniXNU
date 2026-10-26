@@ -24,6 +24,7 @@ on:
           - kernel thyme-ufs-probe
           - kernel thyme-storage-static
           - kernel thyme-native-ufs-compile
+          - kernel thyme-native-ufs-root
           - kernel payload
           - kernel userdata
           - kernel userdata payload
@@ -182,10 +183,22 @@ jobs:
         run: ./unixnu defconfig "$DEFCONFIG"
 
       - name: Prepare inputs
-        if: contains(inputs.steps, 'payload')
+        if: contains(inputs.steps, 'payload') || inputs.steps == 'kernel thyme-native-ufs-root'
         env:
           GROW_GIB: ${{ inputs.grow_gib }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "$STEPS" = 'kernel thyme-native-ufs-root' ]; then
+            archive="$RUNNER_TEMP/thyme-root-build-inputs.tar.gz"
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/677334260" > "$archive"
+            echo '005547c8ea0eaf25ab8892f88937780b69376cda6a5c2ca2d27c2c1e8f90e820  '"$archive" | shasum -a 256 -c -
+            python3 - "$archive" "$RUNNER_TEMP/thyme-root-inputs" <<'PY'
+          import sys, tarfile
+          with tarfile.open(sys.argv[1], 'r:gz') as archive:
+              archive.extractall(sys.argv[2], filter='data')
+          PY
+          fi
           trust_cache_url=$(jq -r '.inputs.trust_cache_url // ""' "$GITHUB_EVENT_PATH")
           data_seed_url=$(jq -r '.inputs.data_seed_url // ""' "$GITHUB_EVENT_PATH")
           if [ -n "$trust_cache_url" ]; then
@@ -276,6 +289,23 @@ jobs:
               --output "$workspace/out/umi-xnu/thyme/kernel/qemu-storage-apfs.macho"
             echo 'dfd638967a6d2aed6c0bdb5e879e2558d20a31d2180162ac9bfebac418adf2b8  '"$workspace/out/umi-xnu/thyme/kernel/qemu-storage-apfs.macho" | shasum -a 256 -c -
             python3 "$workspace/tools/build_umi_native_ufs.py" --profile phone
+            exit 0
+          fi
+          if [ "$STEPS" = 'kernel thyme-native-ufs-root' ]; then
+            test "$BOARD" = thyme
+            test "$DEFCONFIG" = thyme_k0_defconfig
+            reference="$RUNNER_TEMP/thyme-native-root-reference"
+            abi="$RUNNER_TEMP/thyme-native-root-abi"
+            mkdir -p "$reference" "$abi"
+            gh run download 40256249829 -R "$GITHUB_REPOSITORY" \
+              -n thyme-source-ufs-probe -D "$reference"
+            gh run download 40259996726 -R "$GITHUB_REPOSITORY" \
+              -n thyme-storage-static-audit -D "$abi"
+            python3 device/bringup/build-thyme-native-root.py \
+              --workspace "$RUNNER_TEMP/thyme-native-root" --unixnu "$GITHUB_WORKSPACE" \
+              --source-commit "$GITHUB_SHA" --inputs "$RUNNER_TEMP/thyme-root-inputs" \
+              --reference-source "$reference/out/umi-xnu/thyme/kernel/source-kernel.macho" \
+              --reference-abi "$abi" -j 6
             exit 0
           fi
           # Bootstrap pass: plain kernel so the archive builders have their
@@ -418,6 +448,23 @@ jobs:
         with:
           name: thyme-native-ufs-compile
           path: ${{ runner.temp }}/thyme-native-ufs/out/umi-xnu/thyme/tree/build/native-ufs/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload thyme native UFS root kernel and receipts
+        if: always() && inputs.steps == 'kernel thyme-native-ufs-root'
+        uses: actions/upload-artifact@v4
+        with:
+          name: thyme-native-ufs-root
+          path: |
+            ${{ runner.temp }}/thyme-native-root/native-root-inputs.json
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/kernel/native-ufs-root.*
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/*source-build-status.json
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/logs/
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/tree/build/native-ufs/
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/tree/build/umi-root-policy/*report.json
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/tree/build/umi-root-policy/*.log
+            ${{ runner.temp }}/thyme-native-root/out/umi-xnu/thyme/tree/build/umi-platform-power/*.json
           retention-days: 7
           if-no-files-found: warn
 
