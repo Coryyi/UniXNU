@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 import uuid
 
@@ -35,12 +36,15 @@ spec.loader.exec_module(manifest)
 data = bytes((i * 23 + i // 4096) & 255 for i in range(4096 * 3 + 512))
 record = manifest.make(io.BytesIO(data), len(data), keys / 'owner.pem', keys / 'owner-public.pem',
                        uuid.UUID('01e286f1-f4dd-4b2f-99d9-4973337fc788'), 7, out / 'signed')
-library = out / 'verified-root.dylib'
-subprocess.run(['xcrun', 'clang', '-std=c11', '-Wall', '-Wextra', '-Werror', '-dynamiclib',
+darwin = platform.system() == 'Darwin'
+compiler = ['xcrun', 'clang'] if darwin else ['clang']
+library = out / ('verified-root.dylib' if darwin else 'verified-root.so')
+subprocess.run([*compiler, '-std=c11', '-Wall', '-Wextra', '-Werror',
+                *(['-dynamiclib'] if darwin else ['-shared', '-fPIC']),
                 '-I', ROOT / 'include', '-I', args.openssl_prefix / 'include', ROOT / 'src/verified_root.c',
                 ROOT / 'tests/openssl_provider.c', '-L', args.openssl_prefix / 'lib', '-lcrypto', '-o', library], check=True)
-sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
-subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-isysroot', sdk,
+sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip() if darwin else None
+subprocess.run([*compiler, '-target', 'arm64-apple-ios17.0', *(['-isysroot', sdk] if sdk else []),
                 '-std=c11', '-ffreestanding', '-Wall', '-Wextra', '-Werror', '-I', ROOT / 'include',
                 '-c', ROOT / 'src/verified_root.c', '-o', out / 'verified-root-arm64.o'], check=True)
 
@@ -106,6 +110,7 @@ changed[120:152] = __import__('hashlib').sha256(other_key).digest()
 opened(bytes(changed), anchor=other_key, expected=3)
 checks.append('matching attacker-selected key identifier cannot replace the actual RSA signature')
 report = dict(real_c_parser=True, real_openssl_signature_verification=True, native_arm64_ios17_cross_compile=True,
+              host_platform=platform.system(),
               checks=checks, qemu_tested=False, boot_root_authenticated=False, hardware_tested=False)
 (out / 'checks.json').write_text(json.dumps(report, indent=2) + '\n')
 print('PASS:', len(checks), 'groups using real RSA signatures and actual C block verification; host only')
