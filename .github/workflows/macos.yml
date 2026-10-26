@@ -83,6 +83,11 @@ defaults:
 
 jobs:
   build:
+    # Manual, owner-dispatched builds read the private draft input asset.
+    # GitHub requires contents:write for draft release asset access.
+    permissions:
+      actions: read
+      contents: write
     # Pinned: macos-latest moves between images (macos-15 had an Xcode whose clang rejects the warning options the
     # build passes with -Werror). macos-26 is arm64 and carries the Xcode 26 line the build is developed with.
     runs-on: macos-26
