@@ -143,6 +143,9 @@ def build(ctx, kernel=None):
         f'version = 1\n[boot]\ntimeout = {spec.get("timeout", 3)}\ndefault = "xnu"\n[kits]\nautoload = false\n{loader}'
         f'[[entry]]\nid = "xnu"\ntitle = "{spec.get("title", "UniXNU")}"\ntype = "xnu"\npath = "Payloads/kernel.macho"\n{initrd}'
         f'args = "{line}"\n')
+    # The thyme auto-launch path reads this sidecar without invoking the menu.
+    boot_args = stage / 'EFI/UniXNU/boot-args.txt'
+    boot_args.write_bytes(line.encode('ascii'))
     for path in [stage, *stage.rglob('*')]:
         os.utime(path, (EPOCH, EPOCH))
     size = int(spec.get('size_mib', 192))
@@ -152,6 +155,7 @@ def build(ctx, kernel=None):
     write_volume(stage, image, spec.get('volume', 'UNIXNU')[:11], size)
     data_report = {'kernel_sha256': sha256_file(kernel), 'payload_kernel_sha256': sha256_file(payloads / 'kernel.macho'),
                    'adt_sha256': sha256_file(payloads / 'kernel.macho.adt'), 'kernel_args': line,
+                   'boot_args_sha256': sha256_file(boot_args),
                    'trust_cache_sha256': sha256_file(trust) if trust else None,
                    'data_ramdisk_sha256': sha256_file(data) if data else None, 'skip_setup': bool(getattr(args, 'skip_setup', False)), 'panic_screen': bool(spec.get('panic_screen')),
                    'payload_sha256': sha256_file(image), 'payload_bytes': image.stat().st_size, 'hardware_tested': False}
