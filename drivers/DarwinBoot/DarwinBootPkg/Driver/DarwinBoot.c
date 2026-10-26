@@ -805,10 +805,33 @@ DarwinBootEntry (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         if (EFI_ERROR (VolRoot->Open (VolRoot, &Probe, L"\\EFI\\UniXNU\\Payloads\\kernel.macho", EFI_FILE_MODE_READ, 0))) { VolRoot->Close (VolRoot); continue; }
         Probe->Close (Probe);
         UNIXNU_LOADER_BOOT_REQUEST Req;
+        VOID *ArgsFile = NULL;
+        UINTN ArgsSize = 0;
+        CHAR16 BootArgs[1024];
+        UINTN ArgIndex;
         ZeroMem (&Req, sizeof (Req));
         Req.Volume = FsHandles[Fi];
         Req.KernelPath = L"\\EFI\\UniXNU\\Payloads\\kernel.macho";
         Req.BootArgs = L"-v keepsyms=1 kt_fixed_zones=120";
+        FsStatus = ReadFile (VolRoot, L"\\EFI\\UniXNU\\boot-args.txt", (sizeof (BootArgs) / sizeof (BootArgs[0])) - 1, &ArgsFile, &ArgsSize);
+        if (!EFI_ERROR (FsStatus)) {
+          for (ArgIndex = 0; ArgIndex < ArgsSize; ArgIndex++) {
+            UINT8 Ch = ((UINT8 *)ArgsFile)[ArgIndex];
+            if ((Ch < 0x20) || (Ch > 0x7e)) { break; }
+            BootArgs[ArgIndex] = (CHAR16)Ch;
+          }
+          if (ArgIndex != ArgsSize) {
+            FreePages (ArgsFile, EFI_SIZE_TO_PAGES (ArgsSize));
+            VolRoot->Close (VolRoot);
+            continue;
+          }
+          BootArgs[ArgsSize] = 0;
+          Req.BootArgs = BootArgs;
+          FreePages (ArgsFile, EFI_SIZE_TO_PAGES (ArgsSize));
+        } else if (FsStatus != EFI_NOT_FOUND) {
+          VolRoot->Close (VolRoot);
+          continue;
+        }
         VolRoot->Close (VolRoot);
         ThymeBand (0x20);
         ThymeLog (0x20);
