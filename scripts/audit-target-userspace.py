@@ -9,8 +9,10 @@ import struct
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--volume', type=Path, default=ROOT / '.cache/firmware/target-volumes/os-mount')
+parser.add_argument('--trustcache', type=Path, default=ROOT / '.cache/firmware/target-volumes/static-trustcache.bin')
+parser.add_argument('--output', type=Path, default=ROOT / 'build/target-userspace')
 args = parser.parse_args()
-trustcache = ROOT / '.cache/firmware/target-volumes/static-trustcache.bin'
+trustcache = args.trustcache
 trust = trustcache.read_bytes()
 version, trust_entries = struct.unpack_from('<I', trust)[0], struct.unpack_from('<I', trust, 20)[0]
 if version != 2 or len(trust) != 24 + trust_entries * 24:
@@ -88,7 +90,7 @@ for name, kind in [('sbin/launchd', 2), ('usr/lib/dyld', 7)]:
 report = {'target': 'iPad7,1 / 17.7.11 / 21H461', 'files': results,
           'code_page_hashes_verified': True, 'original_static_trustcache_sha256': hashlib.sha256(trust).hexdigest(), 'apple_trust_chain_verified': False,
           'native_4k_userspace_execution_observed': False, 'ipados_boot_demonstrated': False}
-out = ROOT / 'build/target-userspace'
+out = args.output
 out.mkdir(parents=True, exist_ok=True)
 (out / 'audit.json').write_text(json.dumps(report, indent=2) + '\n')
 print('PASS: unchanged target launchd/dyld ordinary ARM64, direct 4K segment layout and all original code-page hashes')
