@@ -23,6 +23,7 @@ on:
           - kernel source-only
           - kernel thyme-ufs-probe
           - kernel thyme-storage-static
+          - kernel thyme-native-ufs-compile
           - kernel payload
           - kernel userdata
           - kernel userdata payload
@@ -248,6 +249,35 @@ jobs:
               --tree "$workspace/out/umi-xnu/thyme/tree"
             exit 0
           fi
+          if [ "$STEPS" = 'kernel thyme-native-ufs-compile' ]; then
+            test "$BOARD" = thyme
+            test "$DEFCONFIG" = thyme_k0_defconfig
+            workspace="$RUNNER_TEMP/thyme-native-ufs"
+            python3 device/bringup/build-thyme-ufs-probe.py \
+              --workspace "$workspace" --unixnu "$GITHUB_WORKSPACE" \
+              --source-commit "$GITHUB_SHA" -j 6
+            # Legacy archive builders use umi paths; the measured board and
+            # the actual source build remain thyme.
+            ln -s thyme "$workspace/out/umi-xnu/umi"
+            mkdir -p "$workspace/reference-abi" "$workspace/reference-source" "$workspace/out/umi/storage-abi"
+            gh run download 40259996726 -R "$GITHUB_REPOSITORY" \
+              -n thyme-storage-static-audit -D "$workspace/reference-abi"
+            gh run download 40256249829 -R "$GITHUB_REPOSITORY" \
+              -n thyme-source-ufs-probe -D "$workspace/reference-source"
+            cp -R "$workspace/reference-abi/include" "$workspace/out/umi/storage-abi/include"
+            cp device/package/thyme-storage-abi.json "$workspace/out/umi/storage-abi/interface-audit.json"
+            ./unixnu ipsw extract KernelCache -D "$GITHUB_WORKSPACE/device" --out "$workspace/out/umi-xnu"
+            # Reconstruct the exact ABI-qualified reference. This legacy file
+            # name is used only as the binder's identity input, not an APFS claim.
+            python3 kits/NativePrelink/emit_prelink.py \
+              --kernel "$workspace/reference-source/out/umi-xnu/thyme/kernel/source-kernel.macho" \
+              --prelinked "$workspace/out/umi-xnu/ipsw/21H461/kernelcache.decompressed" \
+              --root com.apple.iokit.IOStorageFamily --slide=-0x1000000 \
+              --output "$workspace/out/umi-xnu/thyme/kernel/qemu-storage-apfs.macho"
+            echo 'dfd638967a6d2aed6c0bdb5e879e2558d20a31d2180162ac9bfebac418adf2b8  '"$workspace/out/umi-xnu/thyme/kernel/qemu-storage-apfs.macho" | shasum -a 256 -c -
+            python3 "$workspace/tools/build_umi_native_ufs.py" --profile phone
+            exit 0
+          fi
           # Bootstrap pass: plain kernel so the archive builders have their
           # compile records and symbol inputs, then the real defconfig pass.
           if [ -f device/configs/bootstrap_defconfig ]; then
@@ -382,6 +412,15 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      - name: Upload thyme native UFS compile audit
+        if: always() && inputs.steps == 'kernel thyme-native-ufs-compile'
+        uses: actions/upload-artifact@v4
+        with:
+          name: thyme-native-ufs-compile
+          path: ${{ runner.temp }}/thyme-native-ufs/out/umi-xnu/thyme/tree/build/native-ufs/
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Upload the build logs
         if: always() && steps.logs.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -409,6 +448,9 @@ jobs:
             echo "| payload | ${PAYLOAD:-skipped} |"
             echo
             echo "This workflow checks build completion, not hardware boot. It publishes kernel artifacts and text logs for 7 days; boot and userdata images are not uploaded."
+            if [ "$STEPS" = 'kernel thyme-native-ufs-compile' ]; then
+              echo "Native UFS archive compile/binding audit only. The archive has not been linked into a boot kernel or tested as a block provider."
+            fi
             xcodebuild -version > /tmp/xcv 2>&1 || true; head -n 1 /tmp/xcv || true
           } >> "$GITHUB_STEP_SUMMARY"
 
