@@ -22,6 +22,7 @@ on:
           - kernel
           - kernel source-only
           - kernel thyme-ufs-probe
+          - kernel thyme-storage-static
           - kernel payload
           - kernel userdata
           - kernel userdata payload
@@ -60,6 +61,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
 
 # One build per device configuration and ref. A dispatch for another device or defconfig runs next to it,
@@ -215,6 +217,7 @@ jobs:
           # prepare-xnu-source.py lists Apple sources through the GitHub API; anonymous calls from hosted runners hit
           # the shared rate limit (HTTP 403).
           GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           UMI_EARLY_TRACE: '1'
         run: |
           if [ "$STEPS" = 'kernel thyme-ufs-probe' ]; then
@@ -223,6 +226,25 @@ jobs:
             python3 device/bringup/build-thyme-ufs-probe.py \
               --workspace "$RUNNER_TEMP/thyme-ufs-probe" --unixnu "$GITHUB_WORKSPACE" \
               --source-commit "$GITHUB_SHA" -j 6
+            exit 0
+          fi
+          if [ "$STEPS" = 'kernel thyme-storage-static' ]; then
+            test "$BOARD" = thyme
+            test "$DEFCONFIG" = thyme_k0_defconfig
+            workspace="$RUNNER_TEMP/thyme-storage-abi"
+            python3 device/bringup/build-thyme-ufs-probe.py \
+              --workspace "$workspace" --unixnu "$GITHUB_WORKSPACE" \
+              --source-commit "$GITHUB_SHA" -j 6
+            mkdir -p "$workspace/candidate" "$workspace/out/umi-xnu"
+            gh run download 40208890963 -R "$GITHUB_REPOSITORY" \
+              -n unixnu-thyme-kernel -D "$workspace/candidate"
+            echo '77972cde15e9262d5768bb3f8cea5b27993976b2c9a2fc42404323f0a3d0cc89  '"$workspace/candidate/kernel/kernel.macho" | shasum -a 256 -c -
+            git init "$workspace/out/umi-xnu/IOStorageFamily"
+            git -C "$workspace/out/umi-xnu/IOStorageFamily" remote add origin https://github.com/apple-oss-distributions/IOStorageFamily.git
+            git -C "$workspace/out/umi-xnu/IOStorageFamily" fetch --depth 1 origin e45fbe30a7879e0b16e26dddb78538f1b00e0bff
+            git -C "$workspace/out/umi-xnu/IOStorageFamily" checkout --detach FETCH_HEAD
+            python3 "$workspace/tools/audit_umi_storage.py" \
+              --candidate "$workspace/candidate/kernel/kernel.macho"
             exit 0
           fi
           # Bootstrap pass: plain kernel so the archive builders have their
@@ -343,6 +365,19 @@ jobs:
             ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/logs/
             ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/*source-build-status.json
             ${{ runner.temp }}/thyme-ufs-probe/out/umi-xnu/thyme/tree/build/umi-ufs-probe/
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload thyme static storage ABI audit
+        if: always() && inputs.steps == 'kernel thyme-storage-static'
+        uses: actions/upload-artifact@v4
+        with:
+          name: thyme-storage-static-audit
+          path: |
+            ${{ runner.temp }}/thyme-storage-abi/out/umi/storage-abi/static-audit.json
+            ${{ runner.temp }}/thyme-storage-abi/out/umi/storage-abi/compile.log
+            ${{ runner.temp }}/thyme-storage-abi/out/umi/storage-abi/compile-command.json
+            ${{ runner.temp }}/thyme-storage-abi/out/umi/storage-abi/include/
           retention-days: 7
           if-no-files-found: warn
 
