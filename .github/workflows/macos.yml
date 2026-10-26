@@ -266,7 +266,7 @@ jobs:
               -n thyme-source-ufs-probe -D "$workspace/reference-source"
             cp -R "$workspace/reference-abi/include" "$workspace/out/umi/storage-abi/include"
             cp device/package/thyme-storage-abi.json "$workspace/out/umi/storage-abi/interface-audit.json"
-            ./unixnu ipsw extract KernelCache -D "$GITHUB_WORKSPACE/device" --out "$workspace/out/umi-xnu"
+            ./unixnu ipsw fetch KernelCache -D "$GITHUB_WORKSPACE/device" --out "$workspace/out/umi-xnu"
             # Reconstruct the exact ABI-qualified reference. This legacy file
             # name is used only as the binder's identity input, not an APFS claim.
             python3 kits/NativePrelink/emit_prelink.py \
