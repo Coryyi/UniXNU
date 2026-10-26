@@ -244,7 +244,8 @@ jobs:
             git -C "$workspace/out/umi-xnu/IOStorageFamily" fetch --depth 1 origin e45fbe30a7879e0b16e26dddb78538f1b00e0bff
             git -C "$workspace/out/umi-xnu/IOStorageFamily" checkout --detach FETCH_HEAD
             python3 "$workspace/tools/audit_umi_storage.py" \
-              --candidate "$workspace/candidate/kernel/kernel.macho"
+              --candidate "$workspace/candidate/kernel/kernel.macho" \
+              --tree "$workspace/out/umi-xnu/thyme/tree"
             exit 0
           fi
           # Bootstrap pass: plain kernel so the archive builders have their
